@@ -14,7 +14,7 @@
 
 ## 配置内容
 ### set_env.sh
-Download [set_env.sh](https://drive.google.com/file/d/1e6_sHdstP1mFR8n9Ch6kJTH17jjAtLSs/view?usp=drive_link) or set API KEY in a new created file ```set_env.sh``` under project root dir.
+Download [.env](https://drive.google.com/file/d/1e6_sHdstP1mFR8n9Ch6kJTH17jjAtLSs/view?usp=drive_link) or set API KEY in a new created file ```.env``` under project root dir.
 ```
 DEEPSEEK_API_KEY=
 BINANCE_API_KEY=
