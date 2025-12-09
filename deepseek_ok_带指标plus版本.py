@@ -345,7 +345,15 @@ def analyze_with_deepseek(price_data):
 
     # 添加当前持仓信息
     current_pos = get_current_position()
-    position_text = "无持仓" if not current_pos else f"{current_pos['side']}仓, 数量: {current_pos['size']}, 盈亏: {current_pos['unrealized_pnl']:.2f}USDT"
+    # position_text = "无持仓" if not current_pos else f"{current_pos['side']}仓, 数量: {current_pos['size']}, 盈亏: {current_pos['unrealized_pnl']:.2f}USDT"
+
+    # 1. 先安全地处理持仓文本
+    if current_pos:
+        position_text = f"{current_pos['side']}仓, 数量: {current_pos['size']}"
+        pnl_value = f"{current_pos['unrealized_pnl']:.2f}"
+    else:
+        position_text = "无持仓"
+        pnl_value = "0.00"
 
     prompt = f"""
     你是一个专业的加密货币交易分析师。请基于以下BTC/USDT {TRADE_CONFIG['timeframe']}周期数据进行分析：
@@ -364,7 +372,7 @@ def analyze_with_deepseek(price_data):
     - 本K线成交量: {price_data['volume']:.2f} BTC
     - 价格变化: {price_data['price_change']:+.2f}%
     - 当前持仓: {position_text}
-    - 持仓盈亏: {current_pos['unrealized_pnl']:.2f} USDT" if current_pos else "持仓盈亏: 0 USDT
+    - 持仓盈亏: {pnl_value} USDT
 
     【防频繁交易重要原则】
     1. **趋势持续性优先**: 不要因单根K线或短期波动改变整体趋势判断
