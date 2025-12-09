@@ -14,7 +14,7 @@
 
 ## 配置内容
 ### set_env.sh
-Download [.env](https://drive.google.com/file/d/1e6_sHdstP1mFR8n9Ch6kJTH17jjAtLSs/view?usp=drive_link) or set API KEY in a new created file ```.env``` under project root dir.
+Download [.env] from my google drive or set API KEY in a new created file ```.env``` under project root dir.
 ```
 DEEPSEEK_API_KEY=
 BINANCE_API_KEY=
@@ -30,8 +30,9 @@ OKX_PASSWORD=
 # Install conda
 wget https://repo.anaconda.com/archive/Anaconda3-2024.10-1-Linux-x86_64.sh
 bash Anaconda3-2024.10-1-Linux-x86_64.sh
-source /root/anaconda3/etc/profile.d/conda.sh 
-echo ". /root/anaconda3/etc/profile.d/conda.sh" >> ~/.bashrc
+source ~/.bashrc
+# source /root/anaconda3/etc/profile.d/conda.sh 
+# echo ". /root/anaconda3/etc/profile.d/conda.sh" >> ~/.bashrc
 
 # create virtual environment
 conda create -n ds python=3.10
