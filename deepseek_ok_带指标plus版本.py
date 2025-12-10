@@ -31,9 +31,9 @@ exchange = ccxt.okx({
 TRADE_CONFIG = {
     'symbol': 'BTC/USDT:USDT',  # OKX的合约符号格式
     'amount': 0.01,  # 交易数量 (BTC)
-    'leverage': 10,  # 杠杆倍数
+    'leverage': 2,  # 杠杆倍数
     'timeframe': '15m',  # 使用15分钟K线
-    'test_mode': True,  # 测试模式
+    'test_mode': False,  # 测试模式
     'data_points': 96,  # 24小时数据（96根15分钟K线）
     'analysis_periods': {
         'short_term': 20,  # 短期均线
@@ -440,8 +440,24 @@ def analyze_with_deepseek(price_data):
             signal_data = create_fallback_signal(price_data)
 
         # 验证必需字段
+        # required_fields = ['signal', 'reason', 'stop_loss', 'take_profit', 'confidence']
+        # if not all(field in signal_data for field in required_fields):
+        #     signal_data = create_fallback_signal(price_data)
+
         required_fields = ['signal', 'reason', 'stop_loss', 'take_profit', 'confidence']
-        if not all(field in signal_data for field in required_fields):
+        is_valid = True
+        for field in required_fields:
+            if field not in signal_data:
+                is_valid = False
+                break
+            # 如果是止损或止盈，必须有具体数字，不能是 None (空)
+            if field in ['stop_loss', 'take_profit'] and signal_data[field] is None:
+                # 只有当信号不是 HOLD 时，才强制要求有价格
+                if signal_data['signal'] != 'HOLD':
+                    is_valid = False
+                    break
+        if not is_valid:
+            print("⚠️ DeepSeek 返回数据格式有误（缺少字段或价格为空），转为备用信号")
             signal_data = create_fallback_signal(price_data)
 
         # 保存信号到历史记录
@@ -498,11 +514,20 @@ def execute_trade(signal_data, price_data):
                     print(f"🔒 近期已出现{signal_data['signal']}信号，避免频繁反转")
                     return
 
-    print(f"交易信号: {signal_data['signal']}")
-    print(f"信心程度: {signal_data['confidence']}")
-    print(f"理由: {signal_data['reason']}")
-    print(f"止损: ${signal_data['stop_loss']:,.2f}")
-    print(f"止盈: ${signal_data['take_profit']:,.2f}")
+    print(f"交易信号: {signal_data.get('signal', 'N/A')}")
+    print(f"信心程度: {signal_data.get('confidence', 'N/A')}")
+    print(f"理由: {signal_data.get('reason', 'N/A')}")
+    
+    # 安全处理价格打印，防止 None 报错
+    sl = signal_data.get('stop_loss')
+    tp = signal_data.get('take_profit')
+    
+    # 如果是数字就格式化，如果是 None 就显示 N/A
+    sl_str = f"${sl:,.2f}" if (sl is not None and isinstance(sl, (int, float))) else "N/A"
+    tp_str = f"${tp:,.2f}" if (tp is not None and isinstance(tp, (int, float))) else "N/A"
+    
+    print(f"止损: {sl_str}")
+    print(f"止盈: {tp_str}")
     print(f"当前持仓: {current_position}")
 
     # 风险管理：低信心信号不执行
@@ -520,7 +545,8 @@ def execute_trade(signal_data, price_data):
         usdt_balance = balance['USDT']['free']
         required_margin = price_data['price'] * TRADE_CONFIG['amount'] / TRADE_CONFIG['leverage']
 
-        if required_margin > usdt_balance * 0.8:  # 使用不超过80%的余额
+        if required_margin > usdt_balance * 0.8:  # 0.8 代表只用80%的仓位
+        # if required_margin > usdt_balance * 0.98:  # 允许使用 98% 的余额（梭哈模式）
             print(f"⚠️ 保证金不足，跳过交易。需要: {required_margin:.2f} USDT, 可用: {usdt_balance:.2f} USDT")
             return
 
