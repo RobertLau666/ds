@@ -284,7 +284,7 @@ def analyze_market(data):
     返回严格的JSON格式：
     {{
         "signal": "BUY" (做多) 或 "SELL" (做空) 或 "HOLD" (观望),
-        "reason": "20字以内的硬核逻辑分析",
+        "reason": "50字以内的硬核逻辑分析，以及简要分析理由(包含趋势判断和技术依据)",
         "stop_loss": 建议止损价 (数字或null),
         "take_profit": 建议止盈价 (数字或null),
         "confidence": "HIGH" (高) 或 "MEDIUM" (中) 或 "LOW" (低)
