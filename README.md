@@ -8,6 +8,8 @@
 - 情绪指标那边要收费了，有兴趣的只能直接联系商用了： TG：@Sam4sea
 - 打赏地址（TRC20）：TUunBuqQ1ZDYt9WrA3ZarndFPQgefXqZAM
 
+大模型模拟炒股比赛：https://nof1.ai/
+
 ## 教程
 1. 视频教程：https://www.youtube.com/watch?v=Yv-AMVaWUVg
 2. 配合分档移动止盈止损：https://youtu.be/-vfeyqUkuzY
