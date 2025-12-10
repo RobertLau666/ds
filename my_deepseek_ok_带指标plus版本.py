@@ -4,6 +4,7 @@ import schedule
 from openai import OpenAI
 import ccxt
 import pandas as pd
+import numpy as np
 from datetime import datetime
 import json
 import re
@@ -12,286 +13,281 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# --- 新增：日志记录类 ---
+# --- 1. 日志系统 (自动保存到文件) ---
 class Logger(object):
     def __init__(self):
-        # 创建 logs 文件夹
         if not os.path.exists('logs'):
             os.makedirs('logs')
-        
-        # 生成带时间戳的文件名
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         self.filename = f"logs/log_{timestamp}.log"
-        
         self.terminal = sys.stdout
         self.log = open(self.filename, 'a', encoding='utf-8')
-        print(f"📄 日志将同时输出到控制台和文件: {self.filename}")
+        print(f"📄 日志文件已创建: {self.filename}")
 
     def write(self, message):
         self.terminal.write(message)
         self.log.write(message)
-        self.log.flush()  # 立即写入文件，防止程序崩溃丢失日志
+        self.log.flush()
 
     def flush(self):
         self.terminal.flush()
         self.log.flush()
 
-# 初始化DeepSeek客户端
+# --- 2. 配置区域 ---
 deepseek_client = OpenAI(
     api_key=os.getenv('DEEPSEEK_API_KEY'),
     base_url="https://api.deepseek.com"
 )
 
-# 初始化OKX交易所
 exchange = ccxt.okx({
-    'options': {
-        'defaultType': 'swap',  # OKX使用swap表示永续合约
-    },
+    'options': {'defaultType': 'swap'},
     'apiKey': os.getenv('OKX_API_KEY'),
     'secret': os.getenv('OKX_SECRET'),
     'password': os.getenv('OKX_PASSWORD'),
 })
 
-# 交易参数配置
+# TRADE_CONFIG = {
+#     'symbol': 'BTC/USDT:USDT',  # OKX的合约符号格式
+#     'amount': 0.01,  # 交易数量 (BTC)
+#     'leverage': 2,  # 杠杆倍数
+#     'timeframe': '15m',  # 使用15分钟K线
+#     'test_mode': False,  # 测试模式
+#     'data_points': 96,  # 24小时数据（96根15分钟K线）
+#     'analysis_periods': {
+#         'short_term': 20,  # 短期均线
+#         'medium_term': 50,  # 中期均线
+#         'long_term': 96  # 长期趋势
+#     }
+# }
+
 TRADE_CONFIG = {
-    'symbol': 'BTC/USDT:USDT',  
-    'amount': 0.01,         # 0.01 BTC 约等于 900 U 价值
-    'leverage': 10,         # 必须10倍，否则100U本金买不起
-    'timeframe': '15m',     # 周期
-    'test_mode': True,      # <--- 已修改：开启测试模式，先看效果
-    'data_points': 96,
+    # 🟢 建议新手用 DOGE，杠杆低，容错率高
+    'symbol': 'DOGE/USDT:USDT', 
+    'amount': 1,            # 每次交易合约张数 (DOGE通常1张=10个或100个币)
+    'leverage': 3,          # 3倍杠杆 (非常安全)
+    'timeframe': '15m',     # 实盘建议 15m，调试可用 1m
+    'test_mode': True,      # [开关] True=模拟资金交易, False=实盘真金白银
+    'data_points': 100,     # 获取K线数量
     'analysis_periods': {
-        'short_term': 20,
-        'medium_term': 50,
-        'long_term': 96
+        'short_term': 20,  # 短期均线
+        'medium_term': 50,  # 中期均线
+        'long_term': 96  # 长期趋势
     }
 }
 
-# 全局变量
+# --- 3. 全局变量 ---
 price_history = []
 signal_history = []
-position = None
+position = None # 实盘持仓缓存
 
+# 🟢 虚拟账户 (仅在 test_mode=True 时有效)
+virtual_account = {
+    "balance": 100.0,     # 初始模拟本金 100 U
+    "holdings": 0.0,      # 持仓张数
+    "entry_price": 0.0,   # 开仓均价
+    "side": None          # 'long' 或 'short'
+}
+
+# --- 4. 核心功能函数 ---
 
 def setup_exchange():
-    """设置交易所参数"""
+    """初始化交易所并获取关键信息"""
     try:
-        # OKX设置杠杆
+        # 1. 设置杠杆
         exchange.set_leverage(
             TRADE_CONFIG['leverage'],
             TRADE_CONFIG['symbol'],
-            {'mgnMode': 'cross'}  # 全仓模式
+            {'mgnMode': 'cross'}
         )
-        print(f"设置杠杆倍数: {TRADE_CONFIG['leverage']}x")
+        print(f"✅ 杠杆模式: 全仓 {TRADE_CONFIG['leverage']}x")
 
-        # 获取余额
+        # 2. 获取合约面值 (关键！不同币种1张合约代表的数量不同)
+        markets = exchange.load_markets()
+        market_info = markets[TRADE_CONFIG['symbol']]
+        TRADE_CONFIG['contract_size'] = float(market_info['contractSize'])
+        print(f"📏 合约面值: 1张 = {TRADE_CONFIG['contract_size']} 个币")
+
+        # 3. 获取余额
         balance = exchange.fetch_balance()
-        usdt_balance = balance.get('USDT', {}).get('free', 0)
-        print(f"当前USDT余额: {usdt_balance:.2f}")
-
+        usdt = balance.get('USDT', {}).get('free', 0)
+        print(f"💰 实盘可用余额: {usdt:.2f} USDT")
+        
         return True
     except Exception as e:
-        print(f"交易所设置失败: {e}")
+        print(f"❌ 交易所初始化失败: {e}")
         return False
 
-
 def calculate_technical_indicators(df):
-    """计算技术指标"""
+    """计算丰富指标 (喂给DeepSeek的数据源)"""
     try:
-        # 移动平均线
-        df['sma_5'] = df['close'].rolling(window=5, min_periods=1).mean()
-        df['sma_20'] = df['close'].rolling(window=20, min_periods=1).mean()
-        df['sma_50'] = df['close'].rolling(window=50, min_periods=1).mean()
+        close = df['close']
+        high = df['high']
+        low = df['low']
 
-        # MACD
-        df['ema_12'] = df['close'].ewm(span=12).mean()
-        df['ema_26'] = df['close'].ewm(span=26).mean()
-        df['macd'] = df['ema_12'] - df['ema_26']
+        # 1. 均线系统 (判断趋势)
+        df['sma_5'] = close.rolling(5).mean()
+        df['sma_20'] = close.rolling(20).mean()
+        df['sma_50'] = close.rolling(50).mean() # 牛熊分界
+
+        # 2. MACD (判断动能)
+        ema12 = close.ewm(span=12).mean()
+        ema26 = close.ewm(span=26).mean()
+        df['macd'] = ema12 - ema26
         df['macd_signal'] = df['macd'].ewm(span=9).mean()
-        df['macd_histogram'] = df['macd'] - df['macd_signal']
+        df['macd_hist'] = df['macd'] - df['macd_signal']
 
-        # RSI
-        delta = df['close'].diff()
+        # 3. RSI (判断超买超卖)
+        delta = close.diff()
         gain = (delta.where(delta > 0, 0)).rolling(14).mean()
         loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
         rs = gain / loss
         df['rsi'] = 100 - (100 / (1 + rs))
 
-        # 布林带
-        df['bb_middle'] = df['close'].rolling(20).mean()
-        bb_std = df['close'].rolling(20).std()
-        df['bb_upper'] = df['bb_middle'] + (bb_std * 2)
-        df['bb_lower'] = df['bb_middle'] - (bb_std * 2)
-        df['bb_position'] = (df['close'] - df['bb_lower']) / (df['bb_upper'] - df['bb_lower'])
+        # 4. 布林带 (判断波动区间)
+        mid = close.rolling(20).mean()
+        std = close.rolling(20).std()
+        df['bb_upper'] = mid + 2 * std
+        df['bb_lower'] = mid - 2 * std
+        # 计算价格在布林带的位置 (0=下轨, 0.5=中轨, 1=上轨)
+        df['bb_pct'] = (close - df['bb_lower']) / (df['bb_upper'] - df['bb_lower'])
 
-        # 支撑阻力
-        df['resistance'] = df['high'].rolling(20).max()
-        df['support'] = df['low'].rolling(20).min()
+        # 5. ATR (平均真实波幅 - 用于止损计算)
+        tr1 = high - low
+        tr2 = abs(high - close.shift())
+        tr3 = abs(low - close.shift())
+        tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+        df['atr'] = tr.rolling(14).mean()
 
-        df = df.bfill().ffill()
+        df = df.fillna(0)
         return df
     except Exception as e:
-        print(f"技术指标计算失败: {e}")
+        print(f"指标计算出错: {e}")
         return df
 
-
-def get_market_trend(df):
-    """判断市场趋势"""
+def get_market_data():
+    """获取并处理市场数据"""
     try:
-        current_price = df['close'].iloc[-1]
-        trend_short = "上涨" if current_price > df['sma_20'].iloc[-1] else "下跌"
-        trend_medium = "上涨" if current_price > df['sma_50'].iloc[-1] else "下跌"
-        macd_trend = "bullish" if df['macd'].iloc[-1] > df['macd_signal'].iloc[-1] else "bearish"
-
-        if trend_short == "上涨" and trend_medium == "上涨":
-            overall_trend = "强势上涨"
-        elif trend_short == "下跌" and trend_medium == "下跌":
-            overall_trend = "强势下跌"
-        else:
-            overall_trend = "震荡整理"
-
-        return {
-            'short_term': trend_short,
-            'medium_term': trend_medium,
-            'macd': macd_trend,
-            'overall': overall_trend
-        }
-    except Exception as e:
-        return {}
-
-
-def get_btc_ohlcv_enhanced():
-    """获取K线数据并计算指标"""
-    try:
-        ohlcv = exchange.fetch_ohlcv(TRADE_CONFIG['symbol'], TRADE_CONFIG['timeframe'], limit=TRADE_CONFIG['data_points'])
-        df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-        df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
-
+        ohlcv = exchange.fetch_ohlcv(
+            TRADE_CONFIG['symbol'], 
+            TRADE_CONFIG['timeframe'], 
+            limit=TRADE_CONFIG['data_points']
+        )
+        df = pd.DataFrame(ohlcv, columns=['ts', 'open', 'high', 'low', 'close', 'vol'])
+        df['ts'] = pd.to_datetime(df['ts'], unit='ms')
+        
         df = calculate_technical_indicators(df)
         
-        # 确保数据足够
-        if len(df) < 5:
-            return None
+        if len(df) < 20: return None
 
-        current_data = df.iloc[-1]
-        previous_data = df.iloc[-2]
+        curr = df.iloc[-1]
+        
+        # 趋势简单预判 (供Prompt参考)
+        trend_status = "震荡"
+        if curr['close'] > curr['sma_20'] > curr['sma_50']: trend_status = "多头排列(上涨)"
+        if curr['close'] < curr['sma_20'] < curr['sma_50']: trend_status = "空头排列(下跌)"
 
         return {
-            'price': current_data['close'],
-            'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-            'high': current_data['high'],
-            'low': current_data['low'],
-            'volume': current_data['volume'],
-            'price_change': ((current_data['close'] - previous_data['close']) / previous_data['close']) * 100,
-            'kline_data': df[['timestamp', 'open', 'high', 'low', 'close', 'volume']].tail(10).to_dict('records'),
-            'technical_data': {
-                'rsi': current_data.get('rsi', 0),
-                'macd': current_data.get('macd', 0),
-                'bb_position': current_data.get('bb_position', 0),
-                'sma_5': current_data.get('sma_5', 0),
-                'sma_20': current_data.get('sma_20', 0),
-                'sma_50': current_data.get('sma_50', 0)
+            'price': curr['close'],
+            'ts': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            'indicators': {
+                'rsi': round(curr['rsi'], 2),
+                'macd': round(curr['macd'], 4),
+                'macd_hist': round(curr['macd_hist'], 4),
+                'bb_pct': round(curr['bb_pct'], 2),
+                'atr': round(curr['atr'], 4),
+                'trend': trend_status,
+                'sma20_dist': round((curr['close'] - curr['sma_20'])/curr['sma_20']*100, 2)
             },
-            'trend_analysis': get_market_trend(df)
+            'kline_history': df.tail(6).to_dict('records') # 最近6根K线
         }
     except Exception as e:
-        print(f"获取K线数据失败: {e}")
+        print(f"数据获取失败: {e}")
         return None
 
-
-def get_current_position():
-    """获取当前持仓"""
+def get_real_position():
+    """获取OKX实盘持仓"""
     try:
         positions = exchange.fetch_positions([TRADE_CONFIG['symbol']])
         for pos in positions:
             if pos['symbol'] == TRADE_CONFIG['symbol']:
-                contracts = float(pos['contracts']) if pos['contracts'] else 0
-                if contracts > 0:
+                amt = float(pos['contracts'])
+                if amt > 0:
                     return {
-                        'side': pos['side'],
-                        'size': contracts,
-                        'entry_price': float(pos['entryPrice']) if pos['entryPrice'] else 0,
-                        'unrealized_pnl': float(pos['unrealizedPnl']) if pos['unrealizedPnl'] else 0
+                        'side': pos['side'], 
+                        'size': amt,
+                        'pnl': float(pos['unrealizedPnl'])
                     }
         return None
-    except Exception as e:
-        print(f"获取持仓失败: {e}")
+    except:
         return None
 
+# --- 5. DeepSeek 分析核心 (Prompt优化版) ---
 
-def safe_json_parse(json_str):
-    """安全解析JSON"""
-    try:
-        return json.loads(json_str)
-    except json.JSONDecodeError:
-        try:
-            # 简单的修复尝试
-            json_str = json_str.replace("'", '"')
-            json_str = re.sub(r'(\w+):', r'"\1":', json_str)
-            return json.loads(json_str)
-        except:
-            return None
-
-
-def create_fallback_signal(price_data):
-    """备用信号"""
-    return {
-        "signal": "HOLD",
-        "reason": "技术分析数据不足或解析失败，保守观望",
-        "stop_loss": None,
-        "take_profit": None,
-        "confidence": "LOW",
-        "is_fallback": True
-    }
-
-
-def analyze_with_deepseek(price_data):
-    """DeepSeek分析核心"""
+def analyze_market(data):
+    """请求DeepSeek分析"""
     
-    # 1. 安全处理持仓文本
-    current_pos = get_current_position()
-    if current_pos:
-        position_text = f"{current_pos['side']}仓, 数量: {current_pos['size']}"
-        pnl_value = f"{current_pos['unrealized_pnl']:.2f}"
+    # 1. 准备持仓信息 (根据模式选择来源)
+    if TRADE_CONFIG['test_mode']:
+        pos = virtual_account
+        if pos['side']:
+            # 虚拟盈亏计算
+            diff = (data['price'] - pos['entry_price']) if pos['side'] == 'long' else (pos['entry_price'] - data['price'])
+            pnl = diff * pos['holdings'] * TRADE_CONFIG['contract_size']
+            pos_str = f"{pos['side']}仓 {pos['holdings']}张 (浮盈 {pnl:.2f} U)"
+        else:
+            pos_str = "空仓 (无持仓)"
     else:
-        position_text = "无持仓"
-        pnl_value = "0.00"
+        real_pos = get_real_position()
+        if real_pos:
+            pos_str = f"{real_pos['side']}仓 {real_pos['size']}张 (浮盈 {real_pos['pnl']:.2f} U)"
+        else:
+            pos_str = "空仓"
 
-    # 构建Prompt
-    tech = price_data['technical_data']
-    trend = price_data['trend_analysis']
+    # 2. 构建 K线数据字符串
+    kline_txt = ""
+    for k in data['kline_history']:
+        # 简单的K线描述: 时间 收盘价 涨跌幅
+        change = (k['close'] - k['open']) / k['open'] * 100
+        kline_txt += f"[{k['ts'].strftime('%H:%M')}] 收:{k['close']:.4f} 涨跌:{change:+.2f}% Vol:{k['vol']:.0f}\n"
+
+    # 3. 构建 增强型 Prompt (关键！)
+    # 告诉AI具体数据，而不是模糊的概念，有助于它做数学判断
+    ind = data['indicators']
     
-    kline_str = ""
-    for i, k in enumerate(price_data['kline_data'][-5:]):
-        kline_str += f"K线{i}: 开{k['open']} 收{k['close']} 涨跌{((k['close']-k['open'])/k['open']*100):.2f}%\n"
-
     prompt = f"""
-    角色：加密货币交易专家。
-    资产：{TRADE_CONFIG['symbol']} | 周期：{TRADE_CONFIG['timeframe']}
+    【角色设定】
+    你是一名华尔街资深量化交易员，擅长趋势跟踪与波段交易。你的目标是本金安全第一，其次才是盈利。
     
-    【行情数据】
-    现价：${price_data['price']:,.2f} | 涨跌幅：{price_data['price_change']:.2f}%
-    持仓状态：{position_text} | 浮动盈亏：{pnl_value} USDT
+    【市场快照】
+    交易标的：{TRADE_CONFIG['symbol']} ({TRADE_CONFIG['timeframe']})
+    当前价格：{data['price']}
+    当前持仓：{pos_str}
     
-    【近期K线】
-    {kline_str}
+    【技术面仪表盘】
+    1. 趋势状态：{ind['trend']} (价格与SMA20偏离: {ind['sma20_dist']}%)
+    2. 动能(MACD)：{ind['macd']} (柱状图: {ind['macd_hist']} {'增强' if abs(ind['macd_hist'])>0.0001 else '微弱'})
+    3. 强弱(RSI)：{ind['rsi']} (超买>70, 超卖<30, 50为中轴)
+    4. 波动(布林)：位置 {ind['bb_pct']} (0接近下轨反弹可能, 1接近上轨压力)
+    5. 波动率(ATR)：{ind['atr']} (用于评估止损距离)
+
+    【最近K线数据】
+    {kline_txt}
     
-    【技术指标】
-    RSI(14)：{tech['rsi']:.1f}
-    布林带位置：{tech['bb_position']:.2f} (0=下轨, 0.5=中轨, 1=上轨)
-    MACD趋势：{trend.get('macd', 'N/A')}
-    整体趋势：{trend.get('overall', 'N/A')}
-    
-    【指令】
-    请根据上述数据判断交易方向。
-    如果是HOLD，止损止盈可以填 null。
-    请严格返回JSON格式：
+    【交易逻辑要求】
+    1. **顺势而为**：如果趋势是多头排列，优先寻找做多机会；空头反之。
+    2. **震荡过滤**：如果布林带收口且MACD粘合，视为震荡，建议 HOLD。
+    3. **不频繁交易**：只有当至少2个指标共振时才开单。
+    4. **止损原则**：建议止损设置在当前价格 ± 2*ATR 的位置。
+
+    【输出任务】
+    分析上述数据，给出明确交易指令。
+    返回严格的JSON格式：
     {{
-        "signal": "BUY" 或 "SELL" 或 "HOLD",
-        "reason": "简短理由",
-        "stop_loss": 具体数字或null,
-        "take_profit": 具体数字或null,
-        "confidence": "HIGH" 或 "MEDIUM" 或 "LOW"
+        "signal": "BUY" (做多) 或 "SELL" (做空) 或 "HOLD" (观望),
+        "reason": "20字以内的硬核逻辑分析",
+        "stop_loss": 建议止损价 (数字或null),
+        "take_profit": 建议止盈价 (数字或null),
+        "confidence": "HIGH" (高) 或 "MEDIUM" (中) 或 "LOW" (低)
     }}
     """
 
@@ -299,188 +295,212 @@ def analyze_with_deepseek(price_data):
         response = deepseek_client.chat.completions.create(
             model="deepseek-chat",
             messages=[
-                {"role": "system", "content": "你是一个严格输出JSON的量化交易助手。"},
+                {"role": "system", "content": "你是一个只输出JSON的量化交易引擎，不要输出任何Markdown格式。"},
                 {"role": "user", "content": prompt}
             ],
             stream=False,
-            temperature=0.1
+            temperature=0.1 # 低温度保证输出稳定
         )
         
-        result = response.choices[0].message.content
-        print(f"DeepSeek原始回复: {result}")
+        raw_content = response.choices[0].message.content
+        print(f"DeepSeek原始回复: {raw_content}")
+        # 清洗可能存在的 markdown 符号
+        clean_content = re.sub(r'```json|```', '', raw_content).strip()
         
-        # 提取JSON
-        start = result.find('{')
-        end = result.rfind('}') + 1
-        if start == -1 or end == 0:
-            return create_fallback_signal(price_data)
+        result = json.loads(clean_content)
+        
+        # 简单校验
+        if result.get('signal') not in ['BUY', 'SELL', 'HOLD']:
+            result['signal'] = 'HOLD'
+            result['reason'] = 'AI返回格式异常，强制观望'
             
-        signal_data = safe_json_parse(result[start:end])
-        
-        # 验证必需字段（安全检查）
-        required_fields = ['signal', 'reason', 'stop_loss', 'take_profit', 'confidence']
-        is_valid = True
-        for field in required_fields:
-            if field not in signal_data:
-                is_valid = False
-                break
-            # 只有非HOLD信号才严格检查价格是否为数字
-            if signal_data['signal'] != 'HOLD' and field in ['stop_loss', 'take_profit']:
-                if signal_data[field] is None:
-                    is_valid = False
-        
-        if not is_valid:
-             print("⚠️ 返回数据格式校验未通过，转HOLD")
-             return create_fallback_signal(price_data)
-            
-        # 记录历史
-        signal_data['timestamp'] = price_data['timestamp']
-        signal_history.append(signal_data)
-        if len(signal_history) > 30:
-            signal_history.pop(0)
-            
-        return signal_data
-        
+        return result
+
     except Exception as e:
-        print(f"DeepSeek请求异常: {e}")
-        return create_fallback_signal(price_data)
+        print(f"🧠 DeepSeek 思考失败: {e}")
+        return {"signal": "HOLD", "reason": "API连接错误", "confidence": "LOW"}
 
+# --- 6. 交易执行函数 (双模式) ---
 
-def execute_trade(signal_data, price_data):
-    """执行交易"""
-    current_position = get_current_position()
+def execute_trade(signal, current_price):
+    """执行交易指令"""
+    sig = signal['signal']
+    reason = signal.get('reason', '无')
+    conf = signal.get('confidence', 'LOW')
     
-    # --- 安全打印逻辑 ---
-    sig = signal_data.get('signal', 'N/A')
-    conf = signal_data.get('confidence', 'N/A')
-    reason = signal_data.get('reason', 'N/A')
-    
-    sl = signal_data.get('stop_loss')
-    tp = signal_data.get('take_profit')
-    
-    sl_str = f"${sl:,.2f}" if (sl is not None and isinstance(sl, (int, float))) else "N/A"
-    tp_str = f"${tp:,.2f}" if (tp is not None and isinstance(tp, (int, float))) else "N/A"
+    print(f"🤖 AI指令: 【{sig}】 信心:{conf}")
+    print(f"📝 逻辑: {reason}")
+    if signal.get('stop_loss'):
+        print(f"🛑 建议止损: {signal['stop_loss']}")
 
-    print(f"🤖 信号: {sig} | 信心: {conf}")
-    print(f"📝 理由: {reason}")
-    print(f"🛑 止损: {sl_str} | 🎯 止盈: {tp_str}")
-    print(f"💼 当前持仓: {current_position}")
-    
-    if TRADE_CONFIG['test_mode']:
-        print("🧪 测试模式：不执行真实下单 (只模拟逻辑)")
-        # 即使是测试模式，也模拟检查一下资金是否足够
-        balance = exchange.fetch_balance()
-        usdt_balance = balance.get('USDT', {}).get('free', 0)
-        required_margin = price_data['price'] * TRADE_CONFIG['amount'] / TRADE_CONFIG['leverage']
-        # <--- 修改点：这里改为0.95，模拟你的资金状况
-        if required_margin > usdt_balance * 0.95: 
-            print(f"⚠️ [模拟检测] 警告：保证金可能不足 (需:{required_margin:.2f}, 有:{usdt_balance:.2f})")
-        return
-
-    # 风险管理：低信心不交易
+    # 过滤低信心信号
     if conf == 'LOW' and sig != 'HOLD':
-        print("⚠️ 信心不足，跳过交易")
+        print("⚠️ 信心不足，放弃操作")
         return
 
-    try:
-        # 获取余额检查
-        balance = exchange.fetch_balance()
-        usdt_balance = balance.get('USDT', {}).get('free', 0)
-        required_margin = price_data['price'] * TRADE_CONFIG['amount'] / TRADE_CONFIG['leverage']
+    # ---------------- 模式 A: 模拟账户 (Test Mode) ----------------
+    if TRADE_CONFIG['test_mode']:
+        global virtual_account
+        v_pos = virtual_account
+        contract_val = TRADE_CONFIG['contract_size']
+        
+        print(f"🧪 [模拟账户] 余额: {v_pos['balance']:.2f} U")
 
-        # <--- 修改点：放宽资金限制到 95% --->
-        if required_margin > usdt_balance * 0.95:
-            print(f"⚠️ 保证金不足，跳过交易。需要: {required_margin:.2f} USDT, 可用: {usdt_balance:.2f} USDT")
+        # 模拟买入
+        if sig == 'BUY':
+            # 平空
+            if v_pos['side'] == 'short':
+                pnl = (v_pos['entry_price'] - current_price) * v_pos['holdings'] * contract_val
+                v_pos['balance'] += pnl
+                print(f"🔄 模拟平空 | 盈亏: {pnl:+.2f} U")
+                v_pos['side'] = None
+            
+            # 开多
+            if v_pos['side'] is None:
+                cost = current_price * TRADE_CONFIG['amount'] * contract_val / TRADE_CONFIG['leverage']
+                if cost > v_pos['balance']:
+                    print("⚠️ 模拟余额不足")
+                else:
+                    v_pos['side'] = 'long'
+                    v_pos['entry_price'] = current_price
+                    v_pos['holdings'] = TRADE_CONFIG['amount']
+                    print(f"🚀 模拟开多 | 均价: {current_price}")
+
+        # 模拟卖出
+        elif sig == 'SELL':
+            # 平多
+            if v_pos['side'] == 'long':
+                pnl = (current_price - v_pos['entry_price']) * v_pos['holdings'] * contract_val
+                v_pos['balance'] += pnl
+                print(f"🔄 模拟平多 | 盈亏: {pnl:+.2f} U")
+                v_pos['side'] = None
+            
+            # 开空
+            if v_pos['side'] is None:
+                cost = current_price * TRADE_CONFIG['amount'] * contract_val / TRADE_CONFIG['leverage']
+                if cost > v_pos['balance']:
+                    print("⚠️ 模拟余额不足")
+                else:
+                    v_pos['side'] = 'short'
+                    v_pos['entry_price'] = current_price
+                    v_pos['holdings'] = TRADE_CONFIG['amount']
+                    print(f"🐻 模拟开空 | 均价: {current_price}")
+        
+        return
+
+    # ---------------- 模式 B: 实盘账户 (Live Mode) ----------------
+    try:
+        real_pos = get_real_position()
+        
+        # 资金检查 (放宽到95%)
+        bal = exchange.fetch_balance()['USDT']['free']
+        cost = current_price * TRADE_CONFIG['amount'] * TRADE_CONFIG['contract_size'] / TRADE_CONFIG['leverage']
+        
+        if cost > bal * 0.95:
+            print(f"💸 实盘余额不足! 需{cost:.2f}, 有{bal:.2f}")
             return
 
-        # 简单交易逻辑
+        # 执行下单
         if sig == 'BUY':
-            if current_position and current_position['side'] == 'short':
-                print("🔄 平空仓...")
-                exchange.create_market_order(TRADE_CONFIG['symbol'], 'buy', current_position['size'], params={'reduceOnly': True})
-                time.sleep(1)
+            if real_pos and real_pos['side'] == 'short':
+                print("🔄 实盘平空...")
+                exchange.create_market_order(TRADE_CONFIG['symbol'], 'buy', real_pos['size'], params={'reduceOnly': True})
+                time.sleep(2)
             
-            if not current_position or current_position['side'] == 'short':
-                print("🚀 开多仓...")
-                exchange.create_market_order(TRADE_CONFIG['symbol'], 'buy', TRADE_CONFIG['amount'], params={})
-                
+            if not real_pos or real_pos['side'] == 'short':
+                print("🚀 实盘开多...")
+                exchange.create_market_order(TRADE_CONFIG['symbol'], 'buy', TRADE_CONFIG['amount'])
+
         elif sig == 'SELL':
-            if current_position and current_position['side'] == 'long':
-                print("🔄 平多仓...")
-                exchange.create_market_order(TRADE_CONFIG['symbol'], 'sell', current_position['size'], params={'reduceOnly': True})
-                time.sleep(1)
+            if real_pos and real_pos['side'] == 'long':
+                print("🔄 实盘平多...")
+                exchange.create_market_order(TRADE_CONFIG['symbol'], 'sell', real_pos['size'], params={'reduceOnly': True})
+                time.sleep(2)
             
-            if not current_position or current_position['side'] == 'long':
-                print("🐻 开空仓...")
-                exchange.create_market_order(TRADE_CONFIG['symbol'], 'sell', TRADE_CONFIG['amount'], params={})
+            if not real_pos or real_pos['side'] == 'long':
+                print("🐻 实盘开空...")
+                exchange.create_market_order(TRADE_CONFIG['symbol'], 'sell', TRADE_CONFIG['amount'])
 
     except Exception as e:
-        print(f"❌ 下单失败: {e}")
+        print(f"❌ 实盘下单错误: {e}")
 
-
-def wait_for_next_period():
-    """智能等待"""
+# --- 7. 主循环 ---
+def wait_until_next_candle():
+    """计算距离下一个K线收盘还有多久"""
     now = datetime.now()
     tf = TRADE_CONFIG['timeframe']
     
     if tf == '1m':
+        # 如果是1分钟，等到下一分钟第0秒
         seconds = 60 - now.second
-        print(f"⏳ [调试] 等待 {seconds} 秒到下一分钟...")
-        return seconds
-    
-    next_min = ((now.minute // 15) + 1) * 15
-    if next_min == 60: next_min = 0
-    
-    wait_min = next_min - now.minute if next_min > now.minute else (60 - now.minute + next_min)
-    seconds = wait_min * 60 - now.second
-    
-    print(f"⏳ 等待 {wait_min-1 if now.second>0 else wait_min}分 {60-now.second if now.second>0 else 0}秒 到整点...")
+    elif tf == '15m':
+        # 如果是15分钟，等到 00, 15, 30, 45 分
+        next_min = ((now.minute // 15) + 1) * 15
+        if next_min == 60:
+            next_min = 0 # 下一小时的0分
+            
+        # 计算分钟差
+        if next_min > now.minute:
+            wait_mins = next_min - now.minute
+        else:
+            wait_mins = 60 - now.minute + next_min
+            
+        # 转换为秒 (减去当前的秒数)
+        seconds = wait_mins * 60 - now.second
+    else:
+        seconds = 60 # 其他周期默认1分钟检查一次
+        
+    print(f"⏳ 等待 {int(seconds/60)}分 {seconds%60}秒 到达下一K线时刻...")
     return seconds
 
-
-def trading_bot():
-    """主循环"""
-    wait_sec = wait_for_next_period()
-    if wait_sec > 0:
-        time.sleep(wait_sec)
-
+def job():
     print("\n" + "="*50)
-    print(f"⏰ 执行时间: {datetime.now().strftime('%H:%M:%S')}")
+    print(f"⏰ {datetime.now().strftime('%H:%M:%S')} K线收盘，开始执行策略")
     
-    price_data = get_btc_ohlcv_enhanced()
-    if not price_data:
-        print("❌ 获取数据失败")
+    data = get_market_data()
+    if not data:
+        print("⚠️ 数据获取失败，跳过本次")
         return
 
-    print(f"💎 {TRADE_CONFIG['symbol']} 现价: ${price_data['price']:,.2f}")
+    print(f"💎 标的: {TRADE_CONFIG['symbol']} | 现价: {data['price']}")
     
-    signal_data = analyze_with_deepseek(price_data)
-    execute_trade(signal_data, price_data)
-
+    decision = analyze_market(data)
+    execute_trade(decision, data['price'])
+    print("="*50 + "\n")
 
 def main():
-    # --- 初始化日志 ---
-    # 这会把所有 print 输出同时写到文件里
+    # 启用日志
     sys.stdout = Logger()
     
-    print(f"🤖 DeepSeek 交易机器人启动 | 周期: {TRADE_CONFIG['timeframe']}")
-    print(f"🧪 测试模式: {'开启' if TRADE_CONFIG['test_mode'] else '关闭'}")
+    print("🤖 DeepSeek 智能交易机器人 V3.1 (整点对齐版)")
+    print(f"⚙️ 模式: {'🧪 模拟测试' if TRADE_CONFIG['test_mode'] else '💸 实盘交易'}")
+    print(f"📊 周期: {TRADE_CONFIG['timeframe']}")
     
     if not setup_exchange():
-        print("❌ 交易所连接失败，请检查API Key")
+        print("❌ 无法启动，请检查API配置")
         return
 
+    # 1. 启动时先立刻跑一次，看一眼当前状态
+    print("🚀 启动立即执行一次分析...")
+    job()
+
+    # 2. 进入死循环，永远等待下一个整点
     while True:
         try:
-            trading_bot()
-            time.sleep(5) 
+            # 计算需要睡多久
+            sleep_sec = wait_until_next_candle()
+            
+            # 睡觉 (为了防止睡过头，稍微多睡1秒确保K线生成)
+            time.sleep(sleep_sec + 2) 
+            
+            # 睡醒了，干活
+            job()
+            
         except KeyboardInterrupt:
-            print("🛑 机器人已停止")
+            print("🛑 程序已停止")
             break
         except Exception as e:
-            print(f"⚠️ 主循环报错: {e}")
-            import traceback
-            traceback.print_exc()
+            print(f"⚠️ 主进程错误: {e}")
             time.sleep(10)
 
 if __name__ == "__main__":
