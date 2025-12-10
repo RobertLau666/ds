@@ -50,7 +50,7 @@ exchange = ccxt.okx({
 #     'symbol': 'BTC/USDT:USDT',  # OKX的合约符号格式
 #     'amount': 0.01,  # 交易数量 (BTC)
 #     'leverage': 2,  # 杠杆倍数
-#     'timeframe': '15m',  # 使用15分钟K线
+#     'timeframe': '15m',  # 使用15分钟K线（可选值：1m, 3m, 5m, 15m, 30m, 1h）
 #     'test_mode': False,  # 测试模式
 #     'data_points': 96,  # 24小时数据（96根15分钟K线）
 #     'analysis_periods': {
@@ -65,7 +65,7 @@ TRADE_CONFIG = {
     'symbol': 'DOGE/USDT:USDT', 
     'amount': 1,            # 每次交易合约张数 (DOGE通常1张=10个或100个币)
     'leverage': 3,          # 3倍杠杆 (非常安全)
-    'timeframe': '15m',     # 实盘建议 15m，调试可用 1m
+    'timeframe': '15m',     # 实盘建议 15m，调试可用 1m（可选值：1m, 3m, 5m, 15m, 30m, 1h）
     'test_mode': True,      # [开关] True=模拟资金交易, False=实盘真金白银
     'data_points': 100,     # 获取K线数量
     'analysis_periods': {
@@ -426,31 +426,44 @@ def execute_trade(signal, current_price):
 
 # --- 7. 主循环 ---
 def wait_until_next_candle():
-    """计算距离下一个K线收盘还有多久"""
+    """通用型K线对齐函数：支持任意分钟周期的精准对齐"""
     now = datetime.now()
-    tf = TRADE_CONFIG['timeframe']
+    tf_str = TRADE_CONFIG['timeframe']
     
-    if tf == '1m':
-        # 如果是1分钟，等到下一分钟第0秒
-        seconds = 60 - now.second
-    elif tf == '15m':
-        # 如果是15分钟，等到 00, 15, 30, 45 分
-        next_min = ((now.minute // 15) + 1) * 15
-        if next_min == 60:
-            next_min = 0 # 下一小时的0分
-            
-        # 计算分钟差
-        if next_min > now.minute:
-            wait_mins = next_min - now.minute
-        else:
-            wait_mins = 60 - now.minute + next_min
-            
-        # 转换为秒 (减去当前的秒数)
-        seconds = wait_mins * 60 - now.second
+    # 1. 解析周期 (提取分钟数)
+    if tf_str.endswith('m'):
+        interval_min = int(tf_str[:-1]) # '15m' -> 15
+    elif tf_str.endswith('h'):
+        interval_min = int(tf_str[:-1]) * 60 # '1h' -> 60
     else:
-        seconds = 60 # 其他周期默认1分钟检查一次
-        
-    print(f"⏳ 等待 {int(seconds/60)}分 {seconds%60}秒 到达下一K线时刻...")
+        # 如果是其他奇怪的周期（如1d），默认睡1分钟
+        print(f"⚠️ 未知周期格式 {tf_str}，默认等待1分钟")
+        return 60
+
+    # 2. 计算下一个整点分钟
+    # 例如当前 13:12, 周期 5m -> 下个点是 13:15
+    # 例如当前 13:12, 周期 15m -> 下个点是 13:15
+    current_total_min = now.minute
+    
+    # 下一个周期的分钟数
+    next_cycle_min = ((current_total_min // interval_min) + 1) * interval_min
+    
+    # 计算需要等待的分钟数
+    wait_minutes = next_cycle_min - current_total_min
+    
+    # 如果下一个周期跨越了小时（比如 55分 + 15分 = 70分），逻辑依然成立，因为我们只关心差值
+    # 但为了精确计算秒数，我们将其转换为秒
+    
+    # 核心算法：(需要等待的完整分钟数 - 1) * 60 + (60 - 当前秒数)
+    # 减1是因为当前这1分钟还没过完
+    
+    seconds = (wait_minutes - 1) * 60 + (60 - now.second)
+    
+    # 防止极端情况（比如刚好在00秒运行，可能算出负数或0）
+    if seconds <= 0:
+        seconds += interval_min * 60
+
+    print(f"⏳ 周期[{tf_str}] | 当前 {now.strftime('%H:%M:%S')} | 等待 {int(seconds/60)}分 {seconds%60}秒 到达下一K线...")
     return seconds
 
 def job():
