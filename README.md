@@ -37,7 +37,7 @@ python my_deepseek_ok_plus_indicators_v2.py
 ```
 
 ## Code Version Analysis
-[version_info.md](old_vesions/version_info.md)
+[version_info.md](old_versions/version_info.md)
 
 ## Reference
 - Follow on Twitter for strategy insights: https://x.com/huojichuanqi
