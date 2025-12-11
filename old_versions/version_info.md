@@ -1,4 +1,6 @@
 # 代码版本分析
+
+## 原始代码
 经过仔细对比分析，这四个版本中，deepseek_ok_带指标plus版本.py (第3个文件) 和 deepseek_ok_带市场情绪+指标版本.py (第2个文件) 明显优于另外两个。
 如果非要选一个目前最稳健、最适合实盘的，我推荐 deepseek_ok_带指标plus版本.py（即“带指标Plus版”）。
 以下是详细的评测和对比分析：
@@ -57,3 +59,10 @@ API_KEY = "7ad48a56-..." # 这是一个硬编码的Key
 
 结论：
 直接运行 deepseek_ok_带指标plus版本.py 是最安全、最稳健的选择。它不需要外部情绪数据，计算指标扎实，且包含资金安全检查。
+
+## app_v1.py
+1. 基于```deepseek_ok_带指标plus版本.py```
+2. 去除了所有"tag"参数：Remove all "tag" parameters from the code. This tag indicates to OKX that the user was referred by code owner ```60b...CDE```, resulting in the code owner receiving a portion of your trading fees as commission.
+
+## app_v2.py
+1. 

@@ -14,9 +14,21 @@ OKX_PASSWORD=
 ```
 
 ### Environment Setup
-Prepare an Ubuntu server (recommended: Alibaba Cloud, Japan/Hong Kong/Singapore regions - [Lightweight Cloud Server](https://swasnext.console.aliyun.com/buy?regionId=ap-northeast-1#/))
-
+Prepare an server, recommended: Alibaba Cloud [轻量应用服务器](https://swasnext.console.aliyun.com/buy?regionId=ap-northeast-1#/)
 ```
+实例：
+    通用型
+    ¥34/月
+镜像：
+    系统镜像 Ubuntu
+    版本：默认
+地域：日本（东京）
+购买配置：
+    数量：1
+    时长：1个月
+    启用自动续费：
+```
+
 # Install conda
 wget https://repo.anaconda.com/archive/Anaconda3-2024.10-1-Linux-x86_64.sh
 bash Anaconda3-2024.10-1-Linux-x86_64.sh
@@ -29,11 +41,10 @@ pip install -r requirements.txt
 ```
 
 ## Run
-1. Remove all "tag" parameters from the code. This tag indicates to OKX that the user was referred by code owner 60b...CDE, resulting in the code owner receiving a portion of your trading fees as commission.
-2. First, set 'test_mode': True to test with a simulated account
-3. Then change to 'test_mode': False to start live trading
+1. First, set ```'test_mode': True``` to test with a simulated account,
+2. Then change to ```'test_mode': False``` to start live trading.
 ```
-python my_deepseek_ok_plus_indicators_v2.py
+python app_v2.py
 ```
 
 ## Code Version Analysis
