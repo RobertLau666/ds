@@ -1,14 +1,7 @@
 # ds
 ## 简介
-- 个人喜欢玩黑箱文化，你们不一样，别上头。
-- 搞这个目的是先确定ds的一些东西，不是商业化产品，主体思路是围绕试验证伪去的
 - 关注推特了解思路来龙去脉：https://x.com/huojichuanqi
-- 注意为了简化逻辑，记得改 单向持仓  单向持仓 单向持仓
-- 目前最有价值的就是ds+指标方案，但是基础版本是本地算好给他，我们正在尝试用ds直接分析指标，但是效果没看出来
-- 情绪指标那边要收费了，有兴趣的只能直接联系商用了： TG：@Sam4sea
-- 打赏地址（TRC20）：TUunBuqQ1ZDYt9WrA3ZarndFPQgefXqZAM
-
-大模型模拟炒股比赛：https://nof1.ai/
+- 大模型模拟炒股比赛：https://nof1.ai/
 
 ## 教程
 1. 视频教程：https://www.youtube.com/watch?v=Yv-AMVaWUVg
@@ -16,7 +9,7 @@
 
 ## 配置内容
 ### set_env.sh
-Download [.env] from my google drive or set API KEY in a new created file ```.env``` under project root dir.
+Download ```.env``` from my google drive or set API KEY in a new created file ```.env```, and put it under project root dir.
 ```
 DEEPSEEK_API_KEY=
 BINANCE_API_KEY=
@@ -27,31 +20,25 @@ OKX_PASSWORD=
 ```
 
 ### 环境配置
-准备一台ubuntu服务器 推荐阿里云 香港或者新加坡 轻云服务器
+准备一台ubuntu服务器 推荐阿里云 日本、香港或者新加坡 [轻云服务器](https://swasnext.console.aliyun.com/buy?regionId=ap-northeast-1#/)
 ```
 # Install conda
 wget https://repo.anaconda.com/archive/Anaconda3-2024.10-1-Linux-x86_64.sh
 bash Anaconda3-2024.10-1-Linux-x86_64.sh
 source ~/.bashrc
-# source /root/anaconda3/etc/profile.d/conda.sh 
-# echo ". /root/anaconda3/etc/profile.d/conda.sh" >> ~/.bashrc
 
-# create virtual environment
+# Create virtual environment
 conda create -n ds python=3.10
 conda activate ds
 pip install -r requirements.txt
-# apt-get update 更新镜像源
-# apt-get upgrade 必要库的一个升级
-# apt install npm 安装npm
-# npm install pm2 -g 使用npm安装pm2
-# conda create -n trail3 python=4.10
 ```
 
 ### Run
-1. 去除代码中的所有"tag"参数，它的作用是：当你的机器人带着这个 tag 去 OKX 下单时，OKX 系统会判定：“这个用户是由代码持有者 60bb4a8d3416BCDE 带来的”。结果就是：你每笔交易支付的手续费中，会有一部分被 OKX 分给写这个代码的人。
-2. 先修改'test_mode': True, 测试一下
+1. 去除代码中的所有"tag"参数，它的作用是：当你的机器人带着这个 tag 去 OKX 下单时，OKX 系统会判定：“这个用户是由代码持有者 60b...CDE 带来的”。结果就是：你每笔交易支付的手续费中，会有一部分被 OKX 分给写这个代码的人。
+2. 先修改'test_mode': True, 模拟账户测试一下
+3. 然后再修改'test_mode': True, 开始正式交易
 ```
-python deepseek_ok_带指标plus版本.py
+python my_deepseek_ok_带指标plus版本_v2.py
 ```
 
 
