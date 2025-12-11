@@ -29,9 +29,16 @@ Prepare an server, recommended: Alibaba Cloud [轻量应用服务器](https://sw
     时长：1个月
     启用自动续费：
 ```
-
-# Install conda
+Change the password, then click "Remote Connection" or use VSCode (The SSH configuration is as follows) for remote connection to log in to the server.
 ```
+Host [Public IP address]
+    HostName [Public IP address]
+    User root
+    Port 22
+```
+
+```
+# Install conda
 wget https://repo.anaconda.com/archive/Anaconda3-2024.10-1-Linux-x86_64.sh
 bash Anaconda3-2024.10-1-Linux-x86_64.sh
 source ~/.bashrc
