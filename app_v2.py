@@ -533,7 +533,7 @@ def wait_until_next_candle():
 
 def job():
     print("\n" + "="*50)
-    print(f"⏰ {datetime.now().strftime('%H:%M:%S')} K线收盘，开始执行策略")
+    print(f"⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} K线收盘，开始执行策略")
     
     data = get_market_data()
     if not data:
