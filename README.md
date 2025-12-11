@@ -22,7 +22,8 @@ Prepare an server, recommended: Alibaba Cloud [轻量应用服务器](https://sw
 镜像：
     系统镜像 Ubuntu
     版本：默认
-地域：日本（东京）
+地域：
+    日本（东京）
 购买配置：
     数量：1
     时长：1个月
@@ -30,6 +31,7 @@ Prepare an server, recommended: Alibaba Cloud [轻量应用服务器](https://sw
 ```
 
 # Install conda
+```
 wget https://repo.anaconda.com/archive/Anaconda3-2024.10-1-Linux-x86_64.sh
 bash Anaconda3-2024.10-1-Linux-x86_64.sh
 source ~/.bashrc
